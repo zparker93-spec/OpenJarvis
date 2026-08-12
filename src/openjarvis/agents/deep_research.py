@@ -190,6 +190,7 @@ class DeepResearchAgent(ToolUsingAgent):
             interactive=interactive,
             confirm_callback=confirm_callback,
         )
+        self._system_prompt = system_prompt
 
     @staticmethod
     def _extract_sources(tool_results: List[ToolResult]) -> List[str]:
@@ -221,7 +222,7 @@ class DeepResearchAgent(ToolUsingAgent):
         self._emit_turn_start(input)
 
         # Build system prompt with current date/time injected
-        system_prompt = (
+        system_prompt = self._system_prompt or (
             load_system_prompt_override("deep_research") or _build_system_prompt()
         )
         messages = self._build_messages(input, context, system_prompt=system_prompt)

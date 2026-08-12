@@ -68,9 +68,15 @@ class _ScriptedDeepResearchEngine:
         self.turns = 0
         self.advertised_names: list[str] = []
         self.observed_tool_result = ""
+        self.system_prompt = ""
 
     def generate(self, messages, *, model, **kwargs):
         self.turns += 1
+        system_messages = [
+            message for message in messages if message.role is Role.SYSTEM
+        ]
+        if system_messages:
+            self.system_prompt = system_messages[0].content
         self.advertised_names = [
             spec["function"]["name"] for spec in kwargs.get("tools", [])
         ]
@@ -192,6 +198,8 @@ async def test_server_deep_research_merges_and_executes_all_tool_sources(
                 "model": "test-model",
                 "max_turns": 3,
                 "tools": [_ConfiguredResearchProbe.tool_id],
+                "system_prompt": "RESEARCH_TEMPLATE_SENTINEL",
+                "instruction": "PERSONAL_INSTRUCTION_SENTINEL",
             },
         },
         user_content="Use the configured research probe",
@@ -223,6 +231,8 @@ async def test_server_deep_research_merges_and_executes_all_tool_sources(
     assert not with_knowledge_db or knowledge_names.issubset(engine.advertised_names)
     assert with_knowledge_db or knowledge_names.isdisjoint(engine.advertised_names)
     assert engine.turns == 2
+    assert "RESEARCH_TEMPLATE_SENTINEL" in engine.system_prompt
+    assert "PERSONAL_INSTRUCTION_SENTINEL" in engine.system_prompt
     assert _ConfiguredResearchProbe.calls == 1
     assert engine.observed_tool_result == "configured:sentinel"
     assert "data: [DONE]" in "".join(body_parts)
