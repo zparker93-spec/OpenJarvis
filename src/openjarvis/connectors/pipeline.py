@@ -14,6 +14,7 @@ Typical usage::
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from typing import TYPE_CHECKING, Iterable, Optional
 
@@ -57,6 +58,49 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def _document_fingerprint(doc: Document) -> str:
+    """Return a stable digest of every indexed part of *doc*.
+
+    Connectors use a stable ``doc_id`` for the lifetime of a source item.  A
+    repeated ID therefore does not necessarily mean a duplicate: local files,
+    calendar events, and other mutable records can legitimately change.  The
+    fingerprint lets the pipeline skip byte-for-byte repeats while replacing
+    stale indexed chunks when any searchable content or provenance changes.
+    """
+    attachments = [
+        {
+            "filename": att.filename,
+            "mime_type": att.mime_type,
+            "size_bytes": att.size_bytes,
+            "sha256": att.sha256 or hashlib.sha256(att.content).hexdigest(),
+        }
+        for att in doc.attachments
+    ]
+    payload = {
+        "content": doc.content,
+        "source": doc.source,
+        "source_id": _derive_source_id(doc),
+        "doc_type": doc.doc_type,
+        "title": doc.title,
+        "author": doc.author,
+        "participants": doc.participants,
+        "participants_raw": doc.participants_raw,
+        "thread_id": doc.thread_id,
+        "channel": doc.channel,
+        "url": doc.url,
+        "metadata": doc.metadata,
+        "attachments": attachments,
+    }
+    serialised = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+    return hashlib.sha256(serialised.encode("utf-8")).hexdigest()
+
+
 if TYPE_CHECKING:
     from openjarvis.connectors.attachment_store import AttachmentStore
 
@@ -95,6 +139,7 @@ class IngestionPipeline:
         self._attachment_store = attachment_store
         self._embedder = embedder
         self._seen_doc_ids: set[str] = set()
+        self._document_fingerprints: dict[str, str] = {}
         self._load_existing_doc_ids()
 
     # ------------------------------------------------------------------
@@ -104,9 +149,20 @@ class IngestionPipeline:
     def _load_existing_doc_ids(self) -> None:
         """Populate ``_seen_doc_ids`` from rows already in the store."""
         rows = self._store._conn.execute(
-            "SELECT DISTINCT doc_id FROM knowledge_chunks"
+            "SELECT doc_id, metadata FROM knowledge_chunks "
+            "WHERE deleted_at IS NULL ORDER BY chunk_index"
         ).fetchall()
-        self._seen_doc_ids = {r[0] for r in rows}
+        self._seen_doc_ids = {r["doc_id"] for r in rows}
+        for row in rows:
+            if row["doc_id"] in self._document_fingerprints:
+                continue
+            try:
+                metadata = json.loads(row["metadata"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            fingerprint = metadata.get("document_fingerprint")
+            if isinstance(fingerprint, str) and fingerprint:
+                self._document_fingerprints[row["doc_id"]] = fingerprint
 
     def _embed_chunk(self, content: str) -> tuple[Optional[bytes], str]:
         """Return ``(embedding_bytes, model_version)`` for a chunk.
@@ -142,6 +198,22 @@ class IngestionPipeline:
             return att.content.decode("utf-8", errors="replace")
         return ""
 
+    def needs_full_refresh(self, source: str) -> bool:
+        """Return whether *source* still has pre-fingerprint active chunks.
+
+        Incremental connectors normally emit only records changed since their
+        last checkpoint.  After this replacement-aware pipeline is installed,
+        legacy chunks need one complete pass even when their source files were
+        edited before the newest checkpoint was written.
+        """
+        row = self._store._conn.execute(
+            "SELECT 1 FROM knowledge_chunks "
+            "WHERE source = ? AND deleted_at IS NULL "
+            "AND metadata NOT LIKE ? LIMIT 1",
+            (source, '%"document_fingerprint"%'),
+        ).fetchone()
+        return row is not None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -149,8 +221,10 @@ class IngestionPipeline:
     def ingest(self, documents: Iterable[Document]) -> int:
         """Ingest an iterable of documents into the knowledge store.
 
-        Duplicate ``doc_id`` values are silently skipped (both across
-        calls and within a single batch).
+        Duplicate documents are skipped when both ``doc_id`` and content
+        fingerprint match.  When an existing ``doc_id`` is emitted with a new
+        fingerprint, its old chunks are replaced.  Repeated IDs within one
+        input batch are still skipped so the first connector result wins.
 
         Parameters
         ----------
@@ -164,9 +238,18 @@ class IngestionPipeline:
             The total number of chunks written to the store in this call.
         """
         chunks_stored = 0
+        seen_this_call: set[str] = set()
 
         for doc in documents:
-            if doc.doc_id in self._seen_doc_ids:
+            if doc.doc_id in seen_this_call:
+                continue
+            seen_this_call.add(doc.doc_id)
+
+            document_fingerprint = _document_fingerprint(doc)
+            if (
+                doc.doc_id in self._seen_doc_ids
+                and self._document_fingerprints.get(doc.doc_id) == document_fingerprint
+            ):
                 continue
 
             # Compute v1 provenance fields once per document.
@@ -189,6 +272,7 @@ class IngestionPipeline:
             # Merge any extra connector-level metadata (without overwriting
             # the standard provenance fields set above).
             parent_meta.update(doc.metadata)
+            parent_meta["document_fingerprint"] = document_fingerprint
 
             # Normalise the timestamp to a string once.
             if hasattr(doc.timestamp, "isoformat"):
@@ -202,6 +286,13 @@ class IngestionPipeline:
                 doc_type=doc.doc_type,
                 metadata=parent_meta,
             )
+
+            # All expensive/fallible document preparation happens before the
+            # old rows are removed.  Legacy rows do not have a document
+            # fingerprint, so the first time a connector re-emits them they
+            # are safely refreshed into the new format.
+            if doc.doc_id in self._seen_doc_ids:
+                self._store.delete(doc.doc_id)
 
             for chunk in chunks:
                 embedding_bytes, embedding_version = self._embed_chunk(chunk.content)
@@ -287,6 +378,7 @@ class IngestionPipeline:
                             chunks_stored += 1
 
             self._seen_doc_ids.add(doc.doc_id)
+            self._document_fingerprints[doc.doc_id] = document_fingerprint
 
         return chunks_stored
 

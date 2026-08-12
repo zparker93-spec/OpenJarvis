@@ -88,13 +88,21 @@ class SyncEngine:
         """
         connector_id: str = connector.connector_id
 
-        # Load any previous checkpoint so we can resume.
+        # Load any previous checkpoint so we can resume.  Sources whose stored
+        # chunks predate document fingerprints need one complete migration
+        # pass; otherwise a newer incremental checkpoint could permanently
+        # hide an older file modification from the replacement-aware pipeline.
         checkpoint = self.get_checkpoint(connector_id)
-        prior_cursor: Optional[str] = checkpoint["cursor"] if checkpoint else None
-        prior_items: int = checkpoint["items_synced"] if checkpoint else 0
+        full_refresh = self._pipeline.needs_full_refresh(connector_id)
+        prior_cursor: Optional[str] = (
+            checkpoint["cursor"] if checkpoint and not full_refresh else None
+        )
+        prior_items: int = (
+            checkpoint["items_synced"] if checkpoint and not full_refresh else 0
+        )
 
         since: Optional[datetime] = None
-        if checkpoint and checkpoint.get("last_sync"):
+        if checkpoint and checkpoint.get("last_sync") and not full_refresh:
             try:
                 since = datetime.fromisoformat(checkpoint["last_sync"])
             except (ValueError, TypeError):
