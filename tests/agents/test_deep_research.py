@@ -170,6 +170,24 @@ def test_agent_system_prompt_mentions_research(mock_engine, store):
     assert "source" in system_msg.content.lower()
 
 
+def test_agent_uses_custom_system_prompt(mock_engine, store):
+    """An explicitly configured prompt replaces the built-in research prompt."""
+    mock_engine.generate.return_value = _make_engine_response("Done.")
+
+    ks_tool = KnowledgeSearchTool(store=store)
+    agent = DeepResearchAgent(
+        mock_engine,
+        "test-model",
+        tools=[ks_tool],
+        system_prompt="PERSONAL_ASSISTANT_PROMPT_SENTINEL",
+    )
+    agent.run("test")
+
+    messages = mock_engine.generate.call_args[0][0]
+    assert messages[0].role.value == "system"
+    assert messages[0].content == "PERSONAL_ASSISTANT_PROMPT_SENTINEL"
+
+
 def test_agent_defaults():
     """Verify agent_id, default max_turns, temperature, max_tokens."""
     assert DeepResearchAgent.agent_id == "deep_research"

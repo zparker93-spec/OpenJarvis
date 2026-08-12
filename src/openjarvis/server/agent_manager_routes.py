@@ -873,6 +873,11 @@ async def _stream_managed_agent(
         or getattr(engine, "_model", "")
     )
     system_prompt = config.get("system_prompt")
+    instruction = config.get("instruction", "")
+    if instruction and instruction not in (system_prompt or ""):
+        system_prompt = "\n\n".join(
+            part for part in (system_prompt, instruction) if part
+        )
     temperature = config.get("temperature", 0.7)
     max_tokens = config.get("max_tokens", 1024)
     max_turns = config.get("max_turns", 10)
@@ -979,6 +984,7 @@ async def _stream_managed_agent(
                     temperature=float(config.get("temperature", 0.3)),
                     interactive=True,
                     confirm_callback=lambda _prompt: True,
+                    system_prompt=final_system_prompt,
                 )
                 if resolved_toolkit.mcp_clients:
                     dr_agent._mcp_clients = resolved_toolkit.mcp_clients
