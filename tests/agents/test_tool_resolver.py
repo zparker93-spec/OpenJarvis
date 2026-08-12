@@ -107,6 +107,7 @@ def test_deep_research_grants_are_live_deduplicated_and_use_selected_model(
         names = [tool.spec.name for tool in resolved.instances]
         assert set(names) == {
             "knowledge_search",
+            "knowledge_read",
             "knowledge_sql",
             "scan_chunks",
             "think",
@@ -122,7 +123,7 @@ def test_deep_research_grants_are_live_deduplicated_and_use_selected_model(
         assert scan._engine is engine
         assert scan._model == "agent-selected-model"
     finally:
-        # All three knowledge tools share this store connection.
+        # All knowledge tools share this store connection.
         resolved.by_name["knowledge_sql"]._store.close()
 
 

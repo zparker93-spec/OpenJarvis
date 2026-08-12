@@ -78,6 +78,15 @@ export async function fetchAgentMessages(apiUrl: string, agentId: string): Promi
   return data.messages || [];
 }
 
+export async function clearAgentMessages(apiUrl: string, agentId: string): Promise<number> {
+  const data = await request<{ messages_deleted: number }>(
+    apiUrl,
+    `/v1/managed-agents/${agentId}/messages`,
+    { method: 'DELETE' },
+  );
+  return data.messages_deleted || 0;
+}
+
 export async function fetchTemplates(apiUrl: string): Promise<AgentTemplate[]> {
   const data = await request<{ templates: AgentTemplate[] }>(apiUrl, '/v1/templates');
   return data.templates || [];

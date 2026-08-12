@@ -197,7 +197,7 @@ class SemanticChunker:
     overlap_tokens:
         Token tail copied from each chunk into the head of the next so
         downstream retrieval doesn't miss context that straddles a chunk
-        boundary. Defaults to ``min(100, max_tokens // 5)`` and is clamped
+        boundary. Defaults to ``min(50, max_tokens // 10)`` and is clamped
         to ``[0, max_tokens - 1]``. Set to ``0`` to disable.
     """
 
@@ -211,7 +211,7 @@ class SemanticChunker:
         self.max_tokens = max_tokens
         self.max_chars = max_chars if max_chars is not None else max_tokens * 4
         if overlap_tokens is None:
-            overlap_tokens = min(100, max(1, max_tokens // 5))
+            overlap_tokens = min(50, max(1, max_tokens // 10))
         self.overlap_tokens = max(0, min(overlap_tokens, max(0, max_tokens - 1)))
 
         # Content budget per chunk leaves room for the overlap prefix
@@ -282,26 +282,26 @@ class SemanticChunker:
     # ------------------------------------------------------------------
 
     def _pack_text(self, text: str) -> List[str]:
-        """Emit one chunk per paragraph; sub-split paragraphs over the soft target.
+        """Pack paragraphs into useful chunks, splitting only when needed.
 
-        Paragraphs are the natural chunk unit. A paragraph that fits the
-        soft target ships as one chunk. A paragraph that doesn't is
-        sentence-split and the sentences accumulated up to the soft
-        target; sentences that exceed the hard cap (rare — opaque content
-        with no whitespace) are force-split.
+        Markdown commonly puts a blank line around every heading, list, and
+        short paragraph. Treating each one as a chunk produced dozens of tiny,
+        heavily overlapping rows for a two-page note. Keep paragraph boundaries
+        in the text, but greedily combine short paragraphs up to the soft target.
+        Oversized paragraphs still fall back to sentence and hard splitting.
         """
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         if not paragraphs:
             stripped = text.strip()
             return [stripped] if stripped else []
 
-        out: List[str] = []
+        pieces: List[str] = []
         for para in paragraphs:
             if (
                 len(para) <= self._target_chars
                 and _count_tokens(para) <= self._target_tokens
             ):
-                out.append(para)
+                pieces.append(para)
                 continue
 
             sents = _split_sentences(para)
@@ -319,16 +319,21 @@ class SemanticChunker:
                     len(c) <= self._content_chars
                     and _count_tokens(c) <= self._content_tokens
                 ):
-                    out.append(c)
+                    pieces.append(c)
                 else:
-                    out.extend(
+                    pieces.extend(
                         _force_split(
                             c,
                             max_chars=self._content_chars,
                             max_tokens=self._content_tokens,
                         )
                     )
-        return [c for c in out if c]
+        return _accumulate_capped(
+            [piece for piece in pieces if piece],
+            max_tokens=self._target_tokens,
+            max_chars=self._target_chars,
+            sep="\n\n",
+        )
 
     def _chunk_email(self, text: str) -> List[Tuple[str, Dict[str, Any]]]:
         """Split on reply boundaries; pack each part."""

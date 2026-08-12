@@ -103,6 +103,7 @@ def imessage_start(
         )
         from openjarvis.connectors.store import KnowledgeStore
         from openjarvis.engine.ollama import OllamaEngine
+        from openjarvis.tools.knowledge_read import KnowledgeReadTool
         from openjarvis.tools.knowledge_search import (
             KnowledgeSearchTool,
         )
@@ -117,6 +118,7 @@ def imessage_start(
         retriever = TwoStageRetriever(store)
         tools = [
             KnowledgeSearchTool(retriever=retriever),
+            KnowledgeReadTool(store=store),
             KnowledgeSQLTool(store=store),
             ScanChunksTool(
                 store=store,

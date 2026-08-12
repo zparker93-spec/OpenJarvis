@@ -17,6 +17,7 @@ import {
   runManagedAgent,
   recoverManagedAgent,
   askAgent,
+  clearAgentMessages,
   fetchLearningLog,
   triggerLearning,
   fetchAgentTraces,
@@ -1591,6 +1592,7 @@ function InteractTab({ agentId, agentStatus, onRunStateChange }: { agentId: stri
   const [lastTrace, setLastTrace] = useState<AgentTraceDetail | null>(null);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [question, setQuestion] = useState(''); // question driving the current/last run
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -1784,6 +1786,24 @@ function InteractTab({ agentId, agentStatus, onRunStateChange }: { agentId: stri
     }
   }
 
+  async function handleNewConversation() {
+    if (running || sending || clearing) return;
+    if (!window.confirm('Start a new conversation? This clears this agent’s chat history but keeps its instructions and configuration.')) return;
+    setClearing(true);
+    try {
+      await clearAgentMessages(agentId);
+      setQuestion('');
+      setLiveItems([]);
+      setLastTrace(null);
+      setErrorMsg('');
+      toast.success('New conversation started');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not clear conversation history');
+    } finally {
+      setClearing(false);
+    }
+  }
+
   const isBusy = running || sending;
   const findings = agent?.summary_memory?.trim() || '';
   const traceSteps = lastTrace?.steps ?? [];
@@ -1799,10 +1819,25 @@ function InteractTab({ agentId, agentStatus, onRunStateChange }: { agentId: stri
           <Activity size={14} style={{ color: 'var(--color-accent)' }} />
           Activity trace
         </div>
-        <div
-          className="flex items-center gap-2 text-xs"
-          style={{ color: 'var(--color-text-tertiary)' }}
-        >
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={handleNewConversation}
+            disabled={isBusy || clearing}
+            className="text-xs px-2 py-1 rounded"
+            style={{
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text-secondary)',
+              opacity: isBusy || clearing ? 0.5 : 1,
+            }}
+            title="Clear this agent’s chat history while keeping its instructions"
+          >
+            {clearing ? 'Clearing…' : 'New conversation'}
+          </button>
+          <div
+            className="flex items-center gap-2 text-xs"
+            style={{ color: 'var(--color-text-tertiary)' }}
+          >
           {isBusy ? (
             <>
               <span
@@ -1819,6 +1854,7 @@ function InteractTab({ agentId, agentStatus, onRunStateChange }: { agentId: stri
               {lastTrace && ` · ${lastTrace.outcome}`}
             </>
           )}
+          </div>
         </div>
       </div>
 

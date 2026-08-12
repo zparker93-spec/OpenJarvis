@@ -818,6 +818,7 @@ def _tool_progress_label(tool_name: str, args: str) -> str:
     """Human-readable label for a tool call in progress."""
     labels = {
         "knowledge_search": "Searching your knowledge base",
+        "knowledge_read": "Reading the complete document",
         "knowledge_sql": "Querying data with SQL",
         "scan_chunks": "Scanning documents for semantic matches",
         "think": "Planning next step",
@@ -1976,6 +1977,24 @@ def create_agent_manager_router(
     @agents_router.get("/{agent_id}/messages")
     def list_messages(agent_id: str):
         return {"messages": manager.list_messages(agent_id)}
+
+    @agents_router.delete("/{agent_id}/messages")
+    def clear_messages(agent_id: str):
+        agent_record = manager.get_agent(agent_id)
+        if not agent_record:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        if agent_record["status"] == "running":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Wait for the current agent run to finish before starting "
+                    "a new conversation"
+                ),
+            )
+        return {
+            "status": "cleared",
+            "messages_deleted": manager.clear_messages(agent_id),
+        }
 
     @agents_router.post("/{agent_id}/messages")
     async def send_message(agent_id: str, req: SendMessageRequest, request: Request):

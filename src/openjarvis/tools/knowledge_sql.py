@@ -112,7 +112,7 @@ class KnowledgeSQLTool(BaseTool):
             )
 
         try:
-            rows = self._store._conn.execute(query).fetchmany(_MAX_ROWS)
+            rows = self._store._conn.execute(query).fetchmany(_MAX_ROWS + 1)
         except sqlite3.Error as exc:
             return ToolResult(
                 tool_name="knowledge_sql",
@@ -128,17 +128,33 @@ class KnowledgeSQLTool(BaseTool):
                 metadata={"num_rows": 0},
             )
 
-        columns = rows[0].keys()
+        incomplete = len(rows) >= _MAX_ROWS
+        visible_rows = rows[:_MAX_ROWS]
+        columns = visible_rows[0].keys()
         lines = [" | ".join(columns)]
         lines.append(" | ".join("---" for _ in columns))
-        for row in rows:
+        for row in visible_rows:
             lines.append(" | ".join(str(row[c]) for c in columns))
+
+        if incomplete:
+            lines.extend(
+                [
+                    "",
+                    "[INCOMPLETE RESULT: the 50-row safety limit was reached. "
+                    "Do not claim that omitted rows or documents are absent. "
+                    "Refine the query or use knowledge_read for a complete document.]",
+                ]
+            )
 
         return ToolResult(
             tool_name="knowledge_sql",
             content="\n".join(lines),
             success=True,
-            metadata={"num_rows": len(rows)},
+            metadata={
+                "num_rows": len(visible_rows),
+                "complete": not incomplete,
+                "row_limit": _MAX_ROWS,
+            },
         )
 
 

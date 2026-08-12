@@ -233,7 +233,7 @@ export const SOURCE_CATALOG: ConnectorMeta[] = [
     icon: 'FolderOpen',
     color: 'text-purple-300',
     description: 'Markdown vault',
-    unitLabel: 'notes',
+    unitLabel: 'chunks',
     steps: [
       {
         label: 'Find your vault path: open Obsidian → click the vault name in the bottom-left corner → "Manage Vaults" → look at the path shown under your vault name. On macOS this is usually ~/Documents/MyVault or ~/Library/Mobile Documents/iCloud~md~obsidian/Documents/MyVault',

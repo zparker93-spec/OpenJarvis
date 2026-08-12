@@ -262,3 +262,17 @@ def test_document_no_headings_uses_paragraphs() -> None:
     text = f"{para1}\n\n{para2}"
     results = chunker.chunk(text, doc_type="document")
     assert len(results) >= 2
+
+
+def test_markdown_note_packs_short_paragraphs_without_overlap_explosion() -> None:
+    """A dashboard-style note should not create one overlapping row per line."""
+    chunker = SemanticChunker(max_tokens=512)
+    sections = [
+        f"# Section {i}\n\nThis section contains a short practical statement."
+        for i in range(20)
+    ]
+    text = "\n\n---\n\n".join(sections)
+    results = chunker.chunk(text, doc_type="note")
+
+    assert len(results) <= 3
+    assert all(len(result.content.split()) <= 512 for result in results)

@@ -640,6 +640,15 @@ class AgentManager:
         ).fetchall()
         return [self._row_to_message(r) for r in rows]
 
+    def clear_messages(self, agent_id: str) -> int:
+        """Delete conversation messages while preserving agent configuration."""
+        cur = self._conn.execute(
+            "DELETE FROM agent_messages WHERE agent_id = ?",
+            (agent_id,),
+        )
+        self._conn.commit()
+        return cur.rowcount
+
     def get_pending_messages(self, agent_id: str) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM agent_messages"

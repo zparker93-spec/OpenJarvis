@@ -152,6 +152,26 @@ class TestAgentManagerRoutes:
         resp = client.delete(f"/v1/managed-agents/{agent_id}")
         assert resp.status_code == 200
 
+    def test_clear_agent_messages_preserves_agent(self, manager, client):
+        agent = manager.create_agent(name="chatty", agent_type="deep_research")
+        manager.send_message(agent["id"], "hello")
+        manager.store_agent_response(agent["id"], "hi")
+
+        resp = client.delete(f"/v1/managed-agents/{agent['id']}/messages")
+
+        assert resp.status_code == 200
+        assert resp.json()["messages_deleted"] == 2
+        assert manager.list_messages(agent["id"]) == []
+        assert manager.get_agent(agent["id"])["name"] == "chatty"
+
+    def test_clear_agent_messages_rejects_running_agent(self, manager, client):
+        agent = manager.create_agent(name="busy", agent_type="deep_research")
+        manager.update_agent(agent["id"], status="running")
+
+        resp = client.delete(f"/v1/managed-agents/{agent['id']}/messages")
+
+        assert resp.status_code == 409
+
     def test_pause_resume(self, client):
         create_resp = client.post("/v1/managed-agents", json={"name": "pausable"})
         agent_id = create_resp.json()["id"]

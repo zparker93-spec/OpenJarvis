@@ -3,6 +3,7 @@ import {
   fetchManagedAgents,
   fetchAgentTasks,
   fetchAgentMessages,
+  clearAgentMessages,
   fetchTemplates,
   createManagedAgent,
   pauseManagedAgent,
@@ -448,6 +449,7 @@ function InteractTab({ apiUrl, agentId }: { apiUrl: string; agentId: string }) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<'immediate' | 'queued'>('queued');
   const [sending, setSending] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -489,8 +491,37 @@ function InteractTab({ apiUrl, agentId }: { apiUrl: string; agentId: string }) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
   }
 
+  async function handleNewConversation() {
+    if (sending || clearing) return;
+    if (!window.confirm('Start a new conversation? This clears chat history but keeps the agent instructions and configuration.')) return;
+    setClearing(true);
+    setError('');
+    try {
+      await clearAgentMessages(apiUrl, agentId);
+      setMessages([]);
+    } catch {
+      setError('Failed to start a new conversation.');
+    } finally {
+      setClearing(false);
+    }
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', paddingBottom: 8 }}>
+        <button
+          onClick={handleNewConversation}
+          disabled={sending || clearing}
+          style={{
+            padding: '5px 10px', borderRadius: 5, background: 'transparent',
+            border: `1px solid ${C.border}`, color: C.subtext0, fontSize: 11,
+            cursor: sending || clearing ? 'not-allowed' : 'pointer',
+            opacity: sending || clearing ? 0.5 : 1,
+          }}
+        >
+          {clearing ? 'Clearing…' : 'New conversation'}
+        </button>
+      </div>
       {/* Message list */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '0 0 8px 0', display: 'flex', flexDirection: 'column', gap: 8 }}>
         {messages.length === 0 && (
