@@ -7,7 +7,10 @@ Optionally delegates to a ``TwoStageRetriever`` for BM25 + reranking.
 
 from __future__ import annotations
 
+import re
+from pathlib import PureWindowsPath
 from typing import TYPE_CHECKING, Any, Optional
+from urllib.parse import unquote
 
 from openjarvis.connectors.store import KnowledgeStore
 from openjarvis.core.registry import ToolRegistry
@@ -28,6 +31,20 @@ class KnowledgeSearchTool(BaseTool):
     """
 
     tool_id = "knowledge_search"
+
+    @staticmethod
+    def _normalise_query(query: str) -> str:
+        """Turn copied paths and filenames into safe FTS search terms."""
+        decoded = unquote(query.strip())
+        is_path = "/" in decoded or "\\" in decoded
+        if is_path:
+            decoded = PureWindowsPath(decoded.replace("/", "\\")).name
+        if decoded.lower().endswith((".md", ".markdown", ".txt")):
+            decoded = decoded.rsplit(".", 1)[0]
+            is_path = True
+        if is_path:
+            decoded = re.sub(r"[^\w\s]", " ", decoded)
+        return " ".join(decoded.replace("_", " ").split())
 
     def __init__(
         self,
@@ -101,15 +118,24 @@ class KnowledgeSearchTool(BaseTool):
                 success=False,
             )
 
-        query: str = params.get("query", "")
-        if not query:
+        original_query: str = params.get("query", "")
+        if not original_query:
             return ToolResult(
                 tool_name="knowledge_search",
                 content="No query provided.",
                 success=False,
             )
 
+        query = self._normalise_query(original_query)
+        if not query:
+            return ToolResult(
+                tool_name="knowledge_search",
+                content="No searchable terms remained after path normalisation.",
+                success=False,
+            )
+
         top_k: int = int(params.get("top_k", 10))
+        candidate_k = max(top_k * 4, top_k)
         source: Optional[str] = params.get("source")
         doc_type: Optional[str] = params.get("doc_type")
         author: Optional[str] = params.get("author")
@@ -119,7 +145,7 @@ class KnowledgeSearchTool(BaseTool):
         if self._retriever is not None:
             results = self._retriever.retrieve(
                 query,
-                top_k=top_k,
+                top_k=candidate_k,
                 source=source or "",
                 doc_type=doc_type or "",
                 author=author or "",
@@ -129,7 +155,7 @@ class KnowledgeSearchTool(BaseTool):
         else:
             results = self._store.retrieve(  # type: ignore[union-attr]
                 query,
-                top_k=top_k,
+                top_k=candidate_k,
                 source=source,
                 doc_type=doc_type,
                 author=author,
@@ -145,8 +171,24 @@ class KnowledgeSearchTool(BaseTool):
                 metadata={"num_results": 0},
             )
 
+        # A search result is a stored chunk, not a note. Group matching chunks
+        # by their provenance so the model sees one result per document and
+        # does not describe sections from the same note as duplicates.
+        grouped: dict[str, list[Any]] = {}
+        for result in results:
+            meta = result.metadata
+            key = str(
+                meta.get("doc_id")
+                or meta.get("source_id")
+                or meta.get("url")
+                or f"{result.source}:{meta.get('title', '')}"
+            )
+            grouped.setdefault(key, []).append(result)
+
         lines: list[str] = []
-        for i, result in enumerate(results, start=1):
+        document_groups = list(grouped.values())[:top_k]
+        for i, group in enumerate(document_groups, start=1):
+            result = group[0]
             meta = result.metadata
             src_label = result.source or meta.get("source", "")
             title = meta.get("title", "")
@@ -165,8 +207,17 @@ class KnowledgeSearchTool(BaseTool):
                 header_parts.append(f"({url})")
 
             header = " ".join(header_parts) if header_parts else "(unknown source)"
+            source_path = meta.get("source_id") or meta.get("doc_id", "")
             lines.append(f"**Result {i}:** {header}")
-            lines.append(result.content)
+            if source_path:
+                lines.append(f"Path: {source_path}")
+            for snippet in group[:3]:
+                lines.append(snippet.content)
+            if len(group) > 3:
+                lines.append(
+                    f"[{len(group) - 3} additional matching chunks omitted; "
+                    "use knowledge_read with the path above for the complete document.]"
+                )
             lines.append("")
 
         formatted = "\n".join(lines).rstrip()
@@ -175,7 +226,12 @@ class KnowledgeSearchTool(BaseTool):
             tool_name="knowledge_search",
             content=formatted,
             success=True,
-            metadata={"num_results": len(results)},
+            metadata={
+                "num_results": len(document_groups),
+                "num_matching_chunks": len(results),
+                "query_used": query,
+                "grouped_by_document": True,
+            },
         )
 
 

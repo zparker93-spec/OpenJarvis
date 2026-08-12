@@ -100,6 +100,34 @@ class TestKnowledgeSearchTool:
         assert "No relevant results" in result.content
         assert result.metadata["num_results"] == 0
 
+    def test_path_query_is_normalised_to_filename_terms(self, store):
+        tool = KnowledgeSearchTool(store=store)
+        result = tool.execute(query="notes/LLM_Fine-tuning_Notes.md")
+        assert result.success is True
+        assert "LLM Fine-tuning Notes" in result.content
+        assert result.metadata["query_used"] == "LLM Fine tuning Notes"
+
+    def test_matching_chunks_are_grouped_by_document(self, tmp_path):
+        grouped_store = KnowledgeStore(tmp_path / "grouped.db")
+        for index, content in enumerate(
+            ["Growth dashboard objective", "Growth dashboard metrics"]
+        ):
+            grouped_store.store(
+                content,
+                source="obsidian",
+                source_id="Growth.md",
+                doc_id="obsidian:Growth.md",
+                title="Growth Dashboard",
+                chunk_index=index,
+            )
+        try:
+            result = KnowledgeSearchTool(store=grouped_store).execute(query="Growth")
+        finally:
+            grouped_store.close()
+        assert result.metadata["num_results"] == 1
+        assert result.metadata["num_matching_chunks"] == 2
+        assert result.content.count("**Result 1:**") == 1
+
     def test_empty_query(self, store):
         """Empty query string returns success=False."""
         tool = KnowledgeSearchTool(store=store)

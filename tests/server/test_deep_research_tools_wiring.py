@@ -103,7 +103,7 @@ class _ScriptedDeepResearchEngine:
 
 @pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi not installed")
 def test_deep_research_agent_gets_tools(tmp_path: Path) -> None:
-    """When knowledge.db exists, returns 4 tools."""
+    """When knowledge.db exists, returns all five knowledge tools."""
     db_path = tmp_path / "knowledge.db"
     store = KnowledgeStore(str(db_path))
     store.store("test content", source="test", doc_type="note")
@@ -118,10 +118,11 @@ def test_deep_research_agent_gets_tools(tmp_path: Path) -> None:
 
     tool_ids = [t.tool_id for t in tools]
     assert "knowledge_search" in tool_ids
+    assert "knowledge_read" in tool_ids
     assert "knowledge_sql" in tool_ids
     assert "scan_chunks" in tool_ids
     assert "think" in tool_ids
-    assert len(tools) == 4
+    assert len(tools) == 5
     store.close()
 
 
@@ -219,6 +220,7 @@ async def test_server_deep_research_merges_and_executes_all_tool_sources(
     }
     knowledge_names = {
         "knowledge_search",
+        "knowledge_read",
         "knowledge_sql",
         "scan_chunks",
         "think",

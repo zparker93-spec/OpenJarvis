@@ -277,6 +277,7 @@ def build_deep_research_tools(
 
     from openjarvis.connectors.retriever import TwoStageRetriever
     from openjarvis.connectors.store import KnowledgeStore
+    from openjarvis.tools.knowledge_read import KnowledgeReadTool
     from openjarvis.tools.knowledge_search import KnowledgeSearchTool
     from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
     from openjarvis.tools.scan_chunks import ScanChunksTool
@@ -287,6 +288,7 @@ def build_deep_research_tools(
         retriever = TwoStageRetriever(store)
         return [
             KnowledgeSearchTool(retriever=retriever),
+            KnowledgeReadTool(store=store),
             KnowledgeSQLTool(store=store),
             ScanChunksTool(store=store, engine=engine, model=model),
             ThinkTool(),

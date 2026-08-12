@@ -826,6 +826,18 @@ export async function fetchAgentMessages(agentId: string): Promise<AgentMessage[
   return data.messages || [];
 }
 
+export async function clearAgentMessages(agentId: string): Promise<number> {
+  const res = await apiFetch(`/v1/managed-agents/${agentId}/messages`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(body.detail || `Failed: ${res.status}`);
+  }
+  const data = await res.json();
+  return data.messages_deleted || 0;
+}
+
 export async function fetchErrorAgents(): Promise<ManagedAgent[]> {
   const res = await apiFetch(`/v1/agents/errors`);
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
