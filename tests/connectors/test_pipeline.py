@@ -136,6 +136,132 @@ def test_ingest_dedup_persists_across_pipeline_instances(
     assert store.count() == 1  # still only 1 chunk
 
 
+def test_ingest_changed_document_replaces_stale_chunks(
+    pipeline: IngestionPipeline, store: KnowledgeStore
+) -> None:
+    """A stable doc_id with changed content replaces, rather than skips, old data."""
+    old = _make_doc(
+        doc_id="obsidian:00_Home/Dashboard.md",
+        source="obsidian",
+        content="Old dashboard with empty priority placeholders.",
+    )
+    new = _make_doc(
+        doc_id="obsidian:00_Home/Dashboard.md",
+        source="obsidian",
+        content="Current dashboard: Grow Zen's Field Services.",
+    )
+
+    assert pipeline.ingest([old]) == 1
+    assert pipeline.ingest([new]) == 1
+    assert store.count() == 1
+    assert store.retrieve("empty priority placeholders") == []
+    results = store.retrieve("Grow Zen Field Services")
+    assert len(results) == 1
+    assert results[0].content == new.content
+
+
+def test_ingest_unchanged_document_with_new_timestamp_is_deduplicated(
+    pipeline: IngestionPipeline, store: KnowledgeStore
+) -> None:
+    """Filesystem mtime changes alone do not force an unnecessary replacement."""
+    original = _make_doc(
+        doc_id="obsidian:unchanged.md",
+        source="obsidian",
+        content="The searchable note content is unchanged.",
+        timestamp=datetime(2026, 8, 12, 7, 0, tzinfo=timezone.utc),
+    )
+    touched = _make_doc(
+        doc_id="obsidian:unchanged.md",
+        source="obsidian",
+        content=original.content,
+        timestamp=datetime(2026, 8, 12, 8, 0, tzinfo=timezone.utc),
+    )
+
+    assert pipeline.ingest([original]) == 1
+    assert pipeline.ingest([touched]) == 0
+    assert store.count() == 1
+
+
+def test_ingest_changed_document_replaces_across_pipeline_instances(
+    store: KnowledgeStore,
+) -> None:
+    """Persisted fingerprints allow a later sync process to detect an update."""
+    old = _make_doc(doc_id="mutable:001", content="Original indexed record.")
+    new = _make_doc(doc_id="mutable:001", content="Updated indexed record.")
+
+    IngestionPipeline(store).ingest([old])
+    written = IngestionPipeline(store).ingest([new])
+
+    assert written == 1
+    assert store.count() == 1
+    assert store.retrieve("Original indexed record") == []
+    assert len(store.retrieve("Updated indexed record")) == 1
+
+
+def test_ingest_refreshes_legacy_document_without_fingerprint(
+    store: KnowledgeStore,
+) -> None:
+    """Pre-upgrade rows are refreshed the first time their connector emits them."""
+    store.store(
+        content="Legacy stale content.",
+        source="obsidian",
+        source_id="legacy.md",
+        doc_type="note",
+        doc_id="obsidian:legacy.md",
+        metadata={},
+    )
+    current = _make_doc(
+        doc_id="obsidian:legacy.md",
+        source="obsidian",
+        content="Current replacement content.",
+    )
+
+    written = IngestionPipeline(store).ingest([current])
+
+    assert written == 1
+    assert store.count() == 1
+    assert store.retrieve("Legacy stale content") == []
+    assert len(store.retrieve("Current replacement content")) == 1
+
+
+def test_ingest_duplicate_ids_within_update_batch_keep_first(
+    pipeline: IngestionPipeline, store: KnowledgeStore
+) -> None:
+    """A noisy connector cannot replace one ID twice in the same ingest call."""
+    original = _make_doc(doc_id="batch:update", content="Original version.")
+    first_update = _make_doc(doc_id="batch:update", content="First update wins.")
+    duplicate_update = _make_doc(doc_id="batch:update", content="Second update loses.")
+    pipeline.ingest([original])
+
+    written = pipeline.ingest([first_update, duplicate_update])
+
+    assert written == 1
+    assert store.count() == 1
+    assert len(store.retrieve("First update wins")) == 1
+    assert store.retrieve("Second update loses") == []
+
+
+def test_ingest_shorter_update_removes_trailing_stale_chunks(
+    store: KnowledgeStore,
+) -> None:
+    """Replacing a long document removes chunks that the shorter version lacks."""
+    pipeline = IngestionPipeline(store, max_tokens=10)
+    long_content = " ".join(
+        f"Sentence {number} contains enough words to form another stored chunk."
+        for number in range(20)
+    )
+    old = _make_doc(doc_id="mutable:long", content=long_content)
+    new = _make_doc(doc_id="mutable:long", content="One short current version.")
+
+    old_count = pipeline.ingest([old])
+    new_count = pipeline.ingest([new])
+
+    assert old_count > 1
+    assert new_count == 1
+    assert store.count() == 1
+    assert len(store.retrieve("short current version")) == 1
+
+
 # ---------------------------------------------------------------------------
 # Test 3: ingest long document → multiple chunks, all inherit parent metadata
 # ---------------------------------------------------------------------------

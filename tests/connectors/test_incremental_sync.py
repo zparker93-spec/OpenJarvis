@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator, List, Optional
@@ -123,6 +124,51 @@ def test_second_sync_passes_since(engine: SyncEngine) -> None:
     since_value = connector.received_since[1]
     assert since_value is not None
     assert isinstance(since_value, datetime)
+
+
+def test_legacy_chunks_force_one_full_refresh(
+    store: KnowledgeStore, tmp_path: Path
+) -> None:
+    """A checkpoint cannot prevent pre-fingerprint content from being migrated."""
+    state_db = str(tmp_path / "legacy_refresh_state.db")
+    original = _make_doc("timestamp_connector:legacy", "Legacy original content")
+    first_connector = TimestampConnector([original])
+    first_pipeline = IngestionPipeline(store)
+    first_engine = SyncEngine(first_pipeline, state_db=state_db)
+    first_engine.sync(first_connector)
+
+    # Simulate an index created by the previous pipeline version while keeping
+    # the newer sync checkpoint that caused modified files to be skipped.
+    rows = store._conn.execute(
+        "SELECT id, metadata FROM knowledge_chunks WHERE doc_id = ?",
+        (original.doc_id,),
+    ).fetchall()
+    for row in rows:
+        metadata = json.loads(row["metadata"])
+        metadata.pop("document_fingerprint", None)
+        store._conn.execute(
+            "UPDATE knowledge_chunks SET metadata = ? WHERE id = ?",
+            (json.dumps(metadata), row["id"]),
+        )
+    store._conn.commit()
+
+    updated = _make_doc("timestamp_connector:legacy", "Current replacement content")
+    second_connector = TimestampConnector([updated])
+    second_pipeline = IngestionPipeline(store)
+    second_engine = SyncEngine(second_pipeline, state_db=state_db)
+
+    written = second_engine.sync(second_connector)
+
+    assert second_connector.received_since == [None]
+    assert written == 1
+    assert store.count() == 1
+    assert store.retrieve("Legacy original content") == []
+    assert len(store.retrieve("Current replacement content")) == 1
+
+    # Once migrated, ordinary incremental behaviour resumes.
+    third_connector = TimestampConnector([updated])
+    second_engine.sync(third_connector)
+    assert third_connector.received_since[0] is not None
 
 
 # ---------------------------------------------------------------------------
